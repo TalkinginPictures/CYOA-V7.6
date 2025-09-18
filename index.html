@@ -1,0 +1,183 @@
+<script>
+/* -------------------------
+   CONFIG / DATA
+   ------------------------- */
+const PIXABAY_KEY = '49978957-7f3f3c500656460c1f5b4026f';
+const ARASAAC_SEARCH_BASE = 'https://api.arasaac.org/api/pictograms/en/search/';
+const PIXABAY_URL = (q) => `https://pixabay.com/api/?key=${PIXABAY_KEY}&q=${encodeURIComponent(q)}&image_type=illustration&per_page=5&safesearch=true`;
+
+const QUESTIONS = [
+  { id:'wear', title:'What will you wear on your adventure?', options:['Shiny Knight Armour','Pirate Outfit','Wizard Robe','Ninja Suit','Space Suit','Jungle Explorer Gear','Fancy Royal Clothes','Superhero Costume','Pajamas'] },
+  { id:'companion', title:'What will be your trusty companion?', options:['Loyal Dog','Mischievous Cat','Fierce Dragon','Wise Owl','Cheeky Monkey','Brave Horse','Helpful Robot','Magical Unicorn','Giant Snail'] },
+  { id:'tool', title:'What weapon or tool will you take?', options:['Magic Wand','Sword','Bow & Arrow','Shield','Laser Blaster','Slingshot','Net','Spell Book','Frying Pan'] },
+  { id:'music', title:"What's your favourite music?", options:['K-Pop','Hip Hop','R&B','Pop','Rock','Reggae','Afrobeat','Jazz','Classical'] },
+  { id:'enemy', title:'Who will be your main enemy?', options:['Evil Wizard','Sneaky Thief','Ferocious Dragon','Giant Troll','Alien Overlord','Angry Pirate','Mad Scientist','Mischievous Ghost','Your own Evil Twin'] },
+  { id:'setting', title:'What is the setting for your adventure?', options:['Haunted Castle','Deep Space','Dark Forest','Desert Wasteland','Underwater City','Volcano','Snowy Mountain','Secret Lab','Candy Land'] },
+  { id:'challenge', title:'What is the great challenge you must overcome?', options:['Solve a Riddle','Cross a Raging River','Escape a Trap','Defeat a Monster','Sneak Past Guards','Build a Raft','Win a Dance Battle','Cook a Magical Feast','Race to the Finish'] },
+  { id:'reward', title:'What is your reward at the end of the adventure?', options:['Treasure Chest','Golden Crown','Legendary Sword','Magic Potion','A Wish Granted','A Party with Friends','A Flying Pet','Your Own Castle','Eternal Glory'] }
+];
+
+const CONFIRMATIONS = [
+  (n,l)=>`Nice pick, ${n}! You chose ${l}.`,
+  (n,l)=>`Great idea, ${n}! ${l} will suit you well.`,
+  (n,l)=>`Brilliant choice ${n} — ${l}!`,
+  (n,l)=>`Cool! ${n}, you've picked ${l}.`,
+  (n,l)=>`Lovely choice, ${n}. ${l} — excellent!`
+];
+
+const FALLBACK_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="100%" height="100%" fill="#08102a"/><text x="50%" y="50%" fill="#dfe7ff" font-size="28" text-anchor="middle" font-family="Arial">No Image</text></svg>`);
+
+/* -------------------------
+   STATE
+   ------------------------- */
+let state = { name:'', step:'name', qIndex:0, answers:[] };
+let soundOn = true;
+
+const soundToggleEl = document.getElementById('soundToggle');
+soundToggleEl.addEventListener('change', ()=>{ soundOn = soundToggleEl.checked; if(!soundOn) window.speechSynthesis.cancel(); });
+
+function speak(text){
+  if(!soundOn || !window.speechSynthesis) return;
+  try{
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-GB'; u.rate = 1; u.pitch = 1.05;
+    window.speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+async function fetchArasaac(term){
+  try{
+    const res = await fetch(ARASAAC_SEARCH_BASE + encodeURIComponent(term));
+    if(!res.ok) return null;
+    const json = await res.json();
+    if(Array.isArray(json) && json.length){
+      const id = json[0]._id || json[0].id;
+      if(id) return `https://static.arasaac.org/pictograms/${id}/${id}_300.png`;
+    }
+  }catch(e){}
+  return null;
+}
+async function fetchPixabay(term){
+  try{
+    const res = await fetch(PIXABAY_URL(term+' illustration'));
+    if(!res.ok) return null;
+    const json = await res.json();
+    if(json.hits && json.hits.length) return json.hits[0].webformatURL;
+  }catch(e){}
+  return null;
+}
+async function fetchImageFor(term){
+  const a = await fetchArasaac(term);
+  if(a) return a;
+  const p = await fetchPixabay(term);
+  if(p) return p;
+  return FALLBACK_SVG;
+}
+
+const stage=document.getElementById('stage'),progressEl=document.getElementById('progress');
+function setProgress(){
+  if(state.step==='name'){progressEl.textContent=`Step 0 / ${QUESTIONS.length+1}`;return;}
+  if(state.step==='summary'){progressEl.textContent=`${QUESTIONS.length+1} / ${QUESTIONS.length+1}`;return;}
+  progressEl.textContent=`Step ${state.qIndex+1} / ${QUESTIONS.length+1}`;
+}
+
+async function render(){
+  setProgress(); stage.innerHTML='';
+  if(state.step==='name'){
+    stage.innerHTML=`<div class="center"><h2>Welcome, adventurer!</h2>
+    <div style="color:#bfe0ff;margin-bottom:12px">What's your name?</div>
+    <input type="text" id="nameInput" placeholder="Type your name...">
+    <button class="btn primary" id="startBtn" style="margin-top:12px">Start Adventure</button></div>`;
+    document.getElementById('startBtn').onclick=()=>startFromName(document.getElementById('nameInput').value.trim());
+    document.getElementById('nameInput').onkeyup=(e)=>{if(e.key==='Enter')startFromName(e.target.value.trim())};
+    return;
+  }
+  if(typeof state.step==='number'){
+    const q=QUESTIONS[state.qIndex];
+    const title=document.createElement('h2');title.textContent=q.title;stage.appendChild(title);
+    speak(q.title); // NEW: speak question when it appears
+    const grid=document.createElement('div');grid.className='grid';stage.appendChild(grid);
+    for(const opt of q.options){
+      const btn=document.createElement('button');btn.className='option';
+      btn.innerHTML=`<div class="loadingPlaceholder">Loading…</div><div class="label">${opt}</div>`;
+      grid.appendChild(btn);
+      (async()=>{
+        const imgUrl=await fetchImageFor(opt);
+        if(!grid.contains(btn)) return;
+        btn.innerHTML=`<img src="${imgUrl}" alt="${opt}"><div class="label">${opt}</div>`;
+        btn.onclick=()=>{
+          state.answers[state.qIndex]={id:q.id,label:opt,img:imgUrl};
+          const template=CONFIRMATIONS[Math.floor(Math.random()*CONFIRMATIONS.length)];
+          speak(template(state.name, opt));
+          setTimeout(()=>{
+            if(state.qIndex<QUESTIONS.length-1){state.qIndex++;state.step=state.qIndex;render();}
+            else{state.step='summary';render();}
+          },500);
+        };
+      })();
+    }
+    return;
+  }
+  if(state.step==='summary'){
+    const s=state.answers;
+    const title=document.createElement('h2');title.textContent=`${state.name}, here is your adventure!`;stage.appendChild(title);
+    const grid=document.createElement('div');grid.className='summaryGrid';
+    for(const a of s){
+      const card=document.createElement('div');card.className='sumCard';
+      card.innerHTML=`<img src="${a.img}"><div style="margin-top:8px;font-weight:700">${a.label}</div>`;
+      grid.appendChild(card);
+    }
+    stage.appendChild(grid);
+    const sentences=[
+      `${state.name}, you put on your ${s[0].label}.`,
+      `You set off with ${s[1].label}.`,
+      `You carried your ${s[2].label}.`,
+      `You listened to ${s[3].label} along the way.`,
+      `You met the ${s[4].label}!`,
+      `You ventured into ${s[5].label}.`,
+      `You had to ${s[6].label.toLowerCase()}.`,
+      `Your reward was ${s[7].label}.`
+    ];
+    const story=document.createElement('div');story.className='summaryText';
+    story.innerHTML=sentences.map(x=>`<p>${x}</p>`).join('');
+    stage.appendChild(story);
+    speak(`Great job ${state.name}! ${sentences.join(' ')}`);
+    const controls=document.createElement('div');controls.className='controls';
+    const replay=document.createElement('button');replay.className='btn ghost';replay.textContent='Create New Adventure';
+    replay.onclick=()=>{state={name:'',step:'name',qIndex:0,answers:[]};render();};
+    const save=document.createElement('button');save.className='btn primary';save.textContent='Save as PDF';
+    save.onclick=()=>saveAsPDF();
+    controls.appendChild(replay);controls.appendChild(save);stage.appendChild(controls);
+  }
+}
+
+function startFromName(name){state.name=name||'Adventurer';state.qIndex=0;state.step=0;state.answers=new Array(QUESTIONS.length).fill(null);render();speak(`Welcome ${state.name}, let's start!`);}
+
+function generateSentenceForIndex(i,label){
+  switch(i){
+    case 0:return `${state.name}, you put on your ${label}.`;
+    case 1:return `You set off with ${label}.`;
+    case 2:return `You carried ${label}.`;
+    case 3:return `You listened to ${label}.`;
+    case 4:return `You met the ${label}!`;
+    case 5:return `You ventured into ${label}.`;
+    case 6:return `You had to ${label.toLowerCase()}.`;
+    case 7:return `You were rewarded with ${label}.`;
+    default:return label;
+  }
+}
+function saveAsPDF(){
+  const docEl=document.createElement('div');docEl.style.width='800px';docEl.style.padding='18px';docEl.style.background='white';
+  const title=document.createElement('h1');title.textContent=`${state.name}'s Adventure`;title.style.textAlign='center';docEl.appendChild(title);
+  for(let i=0;i<state.answers.length;i++){
+    const a=state.answers[i];const block=document.createElement('div');block.style.display='flex';block.style.gap='12px';block.style.margin='12px 0';
+    const img=document.createElement('img');img.src=a.img;img.style.width='250px';img.style.height='160px';img.style.objectFit='contain';
+    const text=document.createElement('div');text.style.flex='1';text.style.fontSize='18px';text.textContent=generateSentenceForIndex(i,a.label);
+    block.appendChild(img);block.appendChild(text);docEl.appendChild(block);
+  }
+  html2pdf().set({margin:10,filename:`${state.name}_Adventure.pdf`,html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'pt',format:'a4',orientation:'portrait'}}).from(docEl).save();
+}
+
+render();
+</script>
